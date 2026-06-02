@@ -72,6 +72,13 @@ def test_validate_skill_args_bad_schema():
     assert validate_skill_args({}, "not-a-schema") == ["schema must be a JSON Schema object"]
 
 
+def test_validate_skill_args_rejects_null_and_non_object():
+    # A model emitting null/non-object tool args must fail-fast, even if the
+    # schema omits a root type constraint (protoquinn #1 MEDIUM).
+    assert validate_skill_args(None, {}) == ["<root>: expected an object, got null"]
+    assert validate_skill_args(["x"], {}) == ["<root>: expected an object, got list"]
+
+
 def test_emit_and_parse_roundtrip():
     obj = {"verdict": "revise", "reason": "needs work"}
     mime = skill_result_mime("market-review-v1")

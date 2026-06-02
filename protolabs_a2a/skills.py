@@ -97,6 +97,11 @@ def validate_skill_args(
     """
     if not isinstance(schema, dict):
         return ["schema must be a JSON Schema object"]
+    # Tool-call args are always a JSON object; a model emitting null/non-object
+    # would otherwise slip past a schema that omits a root ``type`` constraint.
+    if not isinstance(args, dict):
+        got = "null" if args is None else type(args).__name__
+        return [f"<root>: expected an object, got {got}"]
     from jsonschema import validators
 
     validator_cls = validators.validator_for(schema)
