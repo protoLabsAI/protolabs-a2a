@@ -47,8 +47,7 @@ def test_extension_uris_and_mimes_are_canonical():
     assert pa.COST_EXT_URI == "https://proto-labs.ai/a2a/ext/cost-v1"
     assert pa.COST_MIME == "application/vnd.protolabs.cost-v1+json"
     assert pa.CONFIDENCE_MIME == "application/vnd.protolabs.confidence-v1+json"
-    # worldstate-delta MIME has NO -v1 (the card URI does).
-    assert pa.WORLDSTATE_DELTA_MIME == "application/vnd.protolabs.worldstate-delta+json"
+    assert pa.WORLDSTATE_DELTA_MIME == "application/vnd.protolabs.worldstate-delta-v1+json"
     assert pa.WORLDSTATE_DELTA_EXT_URI == "https://proto-labs.ai/a2a/ext/worldstate-delta-v1"
     assert pa.TOOL_CALL_MIME == "application/vnd.protolabs.tool-call-v1+json"
     assert pa.ALL_EXTENSION_URIS == (
