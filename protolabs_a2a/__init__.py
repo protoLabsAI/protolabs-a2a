@@ -66,6 +66,14 @@ from .parts import (
     read_text,
     text_part,
 )
+from .skills import (
+    emit_skill_result,
+    parse_skill_result,
+    skill_result_mime,
+    skill_tool_name,
+    submit_skill_tool,
+    validate_skill_args,
+)
 
 __all__ = [
     # parts
@@ -76,6 +84,13 @@ __all__ = [
     "part_mime",
     "MIME_KEY",
     "DATA_MEDIA_TYPE",
+    # structured skill outputs (LLM-free; runtime does the forced tool-call + repair)
+    "submit_skill_tool",
+    "skill_tool_name",
+    "skill_result_mime",
+    "validate_skill_args",
+    "emit_skill_result",
+    "parse_skill_result",
     # extensions — MIME constants
     "COST_MIME",
     "CONFIDENCE_MIME",
