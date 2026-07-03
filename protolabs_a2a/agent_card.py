@@ -31,7 +31,7 @@ from a2a.types import (
 from a2a.utils.constants import PROTOCOL_VERSION_1_0, TransportProtocol
 
 from .auth import security_requirements, security_schemes
-from .extensions import ALL_EXTENSION_URIS
+from .extensions import ALL_EXTENSION_URIS, EXTENSION_DESCRIPTIONS
 
 PROVIDER_ORGANIZATION = "protoLabs AI"
 PROVIDER_URL = "https://protolabs.ai"
@@ -40,6 +40,18 @@ PROVIDER_URL = "https://protolabs.ai"
 def protolabs_provider() -> AgentProvider:
     """The shared fleet provider block."""
     return AgentProvider(organization=PROVIDER_ORGANIZATION, url=PROVIDER_URL)
+
+
+def _agent_extension(uri: str) -> AgentExtension:
+    """An ``AgentExtension`` card entry for ``uri``, with a description when known.
+
+    Data-only extensions are never ``required`` (per the spec: "Agents shouldn't
+    mark data-only extensions as required"), so it's left at its ``false`` default.
+    """
+    description = EXTENSION_DESCRIPTIONS.get(uri)
+    if description:
+        return AgentExtension(uri=uri, description=description)
+    return AgentExtension(uri=uri)
 
 
 def jsonrpc_interface(url: str) -> AgentInterface:
@@ -87,7 +99,7 @@ def build_agent_card(
         capabilities=AgentCapabilities(
             streaming=streaming,
             push_notifications=push_notifications,
-            extensions=[AgentExtension(uri=uri) for uri in extension_uris],
+            extensions=[_agent_extension(uri) for uri in extension_uris],
         ),
         security_schemes=security_schemes(bearer=bearer),
         security_requirements=security_requirements(bearer=bearer),

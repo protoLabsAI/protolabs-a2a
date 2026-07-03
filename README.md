@@ -9,8 +9,8 @@ pwnDeck, protoAgent) interoperates byte-for-byte.
 
 > It is the Python mirror of the TypeScript reference layer **`@protolabs/a2a`**,
 > which lives in **protoWorkstacean** (`packages/a2a` / the `@protolabs/a2a`
-> workspace). The wire contract below — MIME types, extension URIs, and the
-> DataPart shape — is shared verbatim across both. Change one, change the other.
+> workspace). The wire contract below — extension URIs, payload shapes, and the
+> metadata convention — is shared verbatim across both. Change one, change the other.
 
 ## Install
 
@@ -32,8 +32,8 @@ Requires Python `>=3.11` and pulls in `a2a-sdk>=1.1`.
 
 | Module | Responsibility |
 | --- | --- |
-| `parts` | Build / read the A2A 1.0 member-discriminated `Part` shape. |
-| `extensions` | The four custom DataPart conventions: MIME + card-URI constants, payload types, `emit_*` / `parse_*`. |
+| `parts` | Build / read the A2A 1.0 member-discriminated `Part` shape (generic content parts). |
+| `extensions` | The four custom metadata conventions: extension-URI constants (the metadata key + card declaration), payload types, `*_metadata` / `parse_*`. |
 | `agent_card` | `build_agent_card(...)` — provider, JSONRPC interface, extension declarations, auth schemes. |
 | `auth` | The `apiKey` (`X-API-Key`) and `bearer` security-scheme builders. |
 
@@ -44,16 +44,15 @@ Everything below is exported at the top level (`import protolabs_a2a as pa`):
 **Parts** — `text_part`, `data_part`, `read_text`, `read_data`, `part_mime`,
 `MIME_KEY`, `DATA_MEDIA_TYPE`
 
-**Extensions — MIME constants** — `COST_MIME`, `CONFIDENCE_MIME`,
-`WORLDSTATE_DELTA_MIME`, `TOOL_CALL_MIME`
+**Extensions — URIs** (the metadata key **and** the card declaration) —
+`COST_EXT_URI`, `CONFIDENCE_EXT_URI`, `WORLDSTATE_DELTA_EXT_URI`,
+`TOOL_CALL_EXT_URI`, `ALL_EXTENSION_URIS`, `EXTENSION_DESCRIPTIONS`
 
-**Extensions — card URIs** — `COST_EXT_URI`, `CONFIDENCE_EXT_URI`,
-`WORLDSTATE_DELTA_EXT_URI`, `TOOL_CALL_EXT_URI`, `ALL_EXTENSION_URIS`
+**Extensions — build metadata fragments** — `cost_metadata`,
+`confidence_metadata`, `worldstate_delta_metadata`, `tool_call_metadata`,
+`merge_extension_metadata`
 
-**Extensions — emit** — `emit_cost`, `emit_confidence`, `emit_worldstate_delta`,
-`emit_tool_call`
-
-**Extensions — parse** — `parse_cost`, `parse_confidence`,
+**Extensions — parse** (read a metadata map) — `parse_cost`, `parse_confidence`,
 `parse_worldstate_delta`, `parse_tool_call`
 
 **Extensions — payload types** — `CostUsage`, `CostPayload`, `ConfidencePayload`,
@@ -65,43 +64,35 @@ Everything below is exported at the top level (`import protolabs_a2a as pa`):
 **Auth** — `security_schemes`, `security_requirements`, `api_key_scheme`,
 `bearer_scheme`, `API_KEY_SCHEME_NAME`, `BEARER_SCHEME_NAME`, `API_KEY_HEADER`
 
-## The wire shape (A2A 1.0)
+## Extension data: the metadata convention
 
-A custom DataPart is the member-discriminated union the JS reference emits:
+Each extension contributes its payload to the **`metadata` map** of a core A2A
+object, **keyed by the extension URI**:
 
 ```json
-{
-  "content": { "$case": "data", "value": <payload> },
-  "metadata": { "mimeType": "<MIME>" },
-  "filename": "",
-  "mediaType": "application/json"
+"metadata": {
+  "https://proto-labs.ai/a2a/ext/cost-v1": { "usage": { "input_tokens": 1500, "output_tokens": 420 }, "costUsd": 0.01, "success": true }
 }
 ```
 
-The discriminator is `metadata.mimeType`; the payload lives at `content.value`.
-`parts.data_part(payload, mime)` produces exactly this; `parts.read_data(part)`
-returns `(mime, payload)`. `read_*` also accepts the flattened proto3-JSON form
-(`{"data": …}`) that `a2a-sdk`'s protobuf serializer emits, so a part produced
-by either runtime parses.
+This is the convention the A2A spec prescribes — *"Extensions should place custom
+attributes in the `metadata` map present on core data structures"*
+([extensions.md → Limitations](https://a2a-protocol.org/latest/topics/extensions/)) —
+and the one the official Timestamp extension follows verbatim. The same URI is
+both the metadata key and the `capabilities.extensions[].uri` card declaration,
+with the version encoded in the URI (`…-v1`).
 
-> **Serializer note.** `a2a-sdk` 1.1 represents `Part` as a **protobuf** message
-> and serializes it with proto3-JSON, which *flattens* the `content` oneof to a
-> top-level `data` (or `text`) field — i.e. `{"data": …, "metadata": …,
-> "mediaType": …}`, NOT the `content.$case`/`content.value` form above. The
-> `content.$case` form is the TypeScript (ts-proto) in-memory/JSON encoding. The
-> **payloads, MIME types, and extension URIs are identical** across both; only
-> the part-envelope key differs. Build outbound parts with `parts.data_part` to
-> get the protoLabs (`content.$case`) wire shape; parse inbound with
-> `parts.read_data`, which is tolerant of both.
+Each `*_metadata` helper returns a one-key fragment `{<EXT_URI>: <payload>}`;
+merge it into the target object's `metadata` (`merge_extension_metadata` combines
+several). `parse_*` reads a metadata map and returns the payload iff its URI key
+is present. **Where each attaches:**
 
-## The four extensions
-
-| Extension | MIME (`metadata.mimeType`) | Card URI (`capabilities.extensions[].uri`) |
+| Extension | URI (metadata key + card declaration) | Attaches to |
 | --- | --- | --- |
-| cost-v1 | `application/vnd.protolabs.cost-v1+json` | `https://proto-labs.ai/a2a/ext/cost-v1` |
-| confidence-v1 | `application/vnd.protolabs.confidence-v1+json` | `https://proto-labs.ai/a2a/ext/confidence-v1` |
-| worldstate-delta-v1 | `application/vnd.protolabs.worldstate-delta-v1+json` | `https://proto-labs.ai/a2a/ext/worldstate-delta-v1` |
-| tool-call-v1 | `application/vnd.protolabs.tool-call-v1+json` | `https://proto-labs.ai/a2a/ext/tool-call-v1` |
+| cost-v1 | `https://proto-labs.ai/a2a/ext/cost-v1` | terminal `Artifact.metadata` |
+| confidence-v1 | `https://proto-labs.ai/a2a/ext/confidence-v1` | terminal `Artifact.metadata` |
+| worldstate-delta-v1 | `https://proto-labs.ai/a2a/ext/worldstate-delta-v1` | terminal `Artifact.metadata` |
+| tool-call-v1 | `https://proto-labs.ai/a2a/ext/tool-call-v1` | status-frame `Message.metadata` |
 
 Payload shapes:
 
@@ -116,14 +107,19 @@ Payload shapes:
 import protolabs_a2a as pa
 from a2a.types import AgentSkill
 
-# Emit extension DataParts (returns wire-shaped dicts):
-cost = pa.emit_cost({"input_tokens": 1500, "output_tokens": 420}, duration_ms=900, cost_usd=0.01, success=True)
-conf = pa.emit_confidence(0.92, explanation="high coverage")
-delta = pa.emit_worldstate_delta([{"domain": "board", "path": "data.backlog", "op": "inc", "value": 1}])
-tool = pa.emit_tool_call("call_1", "file_bug", "completed", result="BUG-12")
+# Build extension metadata fragments and merge them into the terminal Artifact's
+# metadata map (each fragment is {<EXT_URI>: <payload>}):
+artifact.metadata = pa.merge_extension_metadata(
+    pa.cost_metadata({"input_tokens": 1500, "output_tokens": 420}, duration_ms=900, cost_usd=0.01, success=True),
+    pa.confidence_metadata(0.92, explanation="high coverage"),
+    pa.worldstate_delta_metadata([{"domain": "board", "path": "data.backlog", "op": "inc", "value": 1}]),
+)
 
-# Parse (returns the typed payload iff the MIME matches, else None):
-payload = pa.parse_cost(cost)
+# A streaming tool-call event rides on the status update's Message.metadata:
+status_message.metadata = pa.tool_call_metadata("call_1", "file_bug", "completed", result="BUG-12")
+
+# Parse (returns the typed payload iff the extension's URI key is present, else None):
+payload = pa.parse_cost(artifact.metadata)
 
 # Build a 1.0 agent card with the fleet conventions:
 card = pa.build_agent_card(
@@ -138,3 +134,8 @@ card = pa.build_agent_card(
 
 The agent owns *which* extensions it emits — pass `extension_uris=[…]` to
 `build_agent_card` to declare a subset; it defaults to all four.
+
+> **Generic parts.** `parts` (`text_part`, `data_part`, `read_text`, `read_data`)
+> still builds/reads the A2A 1.0 member-discriminated `Part` shape for real
+> **content** (and is reused by `skills`). The four extensions above are telemetry
+> *about* a task, so they live in `metadata`, not in `parts[]`.

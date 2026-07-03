@@ -1,9 +1,11 @@
 """Wire-contract tests for the four protoLabs A2A extensions + Part helpers.
 
 These exercise ONLY ``protolabs_a2a`` (no protoagent runtime deps). They lock the
-byte-for-byte wire contract the TS mirror ``@protolabs/a2a`` also enforces:
-emit produces the member-discriminated DataPart shape, parse round-trips it, and
-the MIME / URI constants are the canonical ones the fleet matches on.
+wire contract the TS mirror ``@protolabs/a2a`` also enforces: each extension
+contributes a ``{<EXT_URI>: <payload>}`` fragment merged into an object's
+``metadata`` map (the A2A convention — extension data lives in the metadata map
+keyed by the extension URI), ``parse_*`` round-trips it from a metadata map, and
+the URI constants are the canonical ones the fleet matches on.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from __future__ import annotations
 import protolabs_a2a as pa
 
 
-# ── part shape ────────────────────────────────────────────────────────────────
+# ── generic Part helpers (unchanged; still used for real content DataParts) ────
 
 
 def test_data_part_is_member_discriminated_shape():
@@ -30,8 +32,7 @@ def test_text_part_and_read_text_round_trip():
 
 def test_read_data_accepts_flattened_proto_json():
     # a2a-sdk's protobuf serializer flattens content.value to a top-level `data`.
-    flat = {"data": {"x": 1}, "metadata": {"mimeType": "application/json"}}
-    mime, payload = pa.read_data(flat)
+    mime, payload = pa.read_data({"data": {"x": 1}, "metadata": {"mimeType": "application/json"}})
     assert mime == "application/json"
     assert payload == {"x": 1}
 
@@ -43,13 +44,11 @@ def test_read_data_non_data_part_returns_none_tuple():
 # ── canonical constants ─────────────────────────────────────────────────────
 
 
-def test_extension_uris_and_mimes_are_canonical():
+def test_extension_uris_are_canonical():
     assert pa.COST_EXT_URI == "https://proto-labs.ai/a2a/ext/cost-v1"
-    assert pa.COST_MIME == "application/vnd.protolabs.cost-v1+json"
-    assert pa.CONFIDENCE_MIME == "application/vnd.protolabs.confidence-v1+json"
-    assert pa.WORLDSTATE_DELTA_MIME == "application/vnd.protolabs.worldstate-delta-v1+json"
+    assert pa.CONFIDENCE_EXT_URI == "https://proto-labs.ai/a2a/ext/confidence-v1"
     assert pa.WORLDSTATE_DELTA_EXT_URI == "https://proto-labs.ai/a2a/ext/worldstate-delta-v1"
-    assert pa.TOOL_CALL_MIME == "application/vnd.protolabs.tool-call-v1+json"
+    assert pa.TOOL_CALL_EXT_URI == "https://proto-labs.ai/a2a/ext/tool-call-v1"
     assert pa.ALL_EXTENSION_URIS == (
         pa.COST_EXT_URI,
         pa.CONFIDENCE_EXT_URI,
@@ -58,11 +57,21 @@ def test_extension_uris_and_mimes_are_canonical():
     )
 
 
+def test_every_extension_uri_has_a_card_description():
+    assert set(pa.EXTENSION_DESCRIPTIONS) == set(pa.ALL_EXTENSION_URIS)
+    assert all(pa.EXTENSION_DESCRIPTIONS[u] for u in pa.ALL_EXTENSION_URIS)
+
+
 # ── cost-v1 ──────────────────────────────────────────────────────────────────
 
 
+def test_cost_metadata_is_keyed_by_uri():
+    meta = pa.cost_metadata({"input_tokens": 1, "output_tokens": 1})
+    assert set(meta) == {pa.COST_EXT_URI}
+
+
 def test_cost_payload_includes_cache_fields_and_costusd():
-    part = pa.emit_cost(
+    meta = pa.cost_metadata(
         {
             "input_tokens": 1500, "output_tokens": 420,
             "cache_read_input_tokens": 900, "cache_creation_input_tokens": 100,
@@ -71,8 +80,7 @@ def test_cost_payload_includes_cache_fields_and_costusd():
         cost_usd=0.0123,
         success=True,
     )
-    assert part["metadata"]["mimeType"] == pa.COST_MIME
-    payload = pa.parse_cost(part)
+    payload = pa.parse_cost(meta)
     assert payload is not None
     assert payload["usage"]["cache_read_input_tokens"] == 900
     assert payload["usage"]["cache_creation_input_tokens"] == 100
@@ -83,8 +91,7 @@ def test_cost_payload_includes_cache_fields_and_costusd():
 
 
 def test_cost_payload_omits_costusd_when_not_supplied():
-    part = pa.emit_cost({"input_tokens": 10, "output_tokens": 5}, duration_ms=15)
-    payload = pa.parse_cost(part)
+    payload = pa.parse_cost(pa.cost_metadata({"input_tokens": 10, "output_tokens": 5}, duration_ms=15))
     assert payload is not None
     assert "costUsd" not in payload
     assert "success" not in payload
@@ -93,15 +100,14 @@ def test_cost_payload_omits_costusd_when_not_supplied():
 # ── confidence-v1 ────────────────────────────────────────────────────────────
 
 
-def test_emit_confidence_payload_minimal():
-    part = pa.emit_confidence(0.7, success=True)
-    assert part["metadata"]["mimeType"] == pa.CONFIDENCE_MIME
-    assert pa.parse_confidence(part) == {"confidence": 0.7, "success": True}
+def test_confidence_metadata_minimal():
+    meta = pa.confidence_metadata(0.7, success=True)
+    assert set(meta) == {pa.CONFIDENCE_EXT_URI}
+    assert pa.parse_confidence(meta) == {"confidence": 0.7, "success": True}
 
 
-def test_emit_confidence_includes_explanation_and_success_false():
-    part = pa.emit_confidence(0.9, explanation="sure but wrong", success=False)
-    payload = pa.parse_confidence(part)
+def test_confidence_includes_explanation_and_success_false():
+    payload = pa.parse_confidence(pa.confidence_metadata(0.9, explanation="sure but wrong", success=False))
     assert payload["confidence"] == 0.9
     assert payload["explanation"] == "sure but wrong"
     assert payload["success"] is False
@@ -110,25 +116,23 @@ def test_emit_confidence_includes_explanation_and_success_false():
 # ── worldstate-delta-v1 ──────────────────────────────────────────────────────
 
 
-def test_emit_and_parse_worldstate_delta():
+def test_worldstate_delta_round_trip():
     deltas = [
         {"domain": "board", "path": "data.backlog", "op": "inc", "value": 1},
         {"domain": "board", "path": "data.status", "op": "set", "value": "open"},
     ]
-    part = pa.emit_worldstate_delta(deltas)
-    assert part["metadata"]["mimeType"] == pa.WORLDSTATE_DELTA_MIME
-    payload = pa.parse_worldstate_delta(part)
-    assert payload == {"deltas": deltas}
+    meta = pa.worldstate_delta_metadata(deltas)
+    assert set(meta) == {pa.WORLDSTATE_DELTA_EXT_URI}
+    assert pa.parse_worldstate_delta(meta) == {"deltas": deltas}
 
 
 # ── tool-call-v1 ─────────────────────────────────────────────────────────────
 
 
-def test_emit_and_parse_tool_call():
-    part = pa.emit_tool_call("call_1", "file_bug", "completed", result="BUG-12")
-    assert part["metadata"]["mimeType"] == pa.TOOL_CALL_MIME
-    payload = pa.parse_tool_call(part)
-    assert payload == {
+def test_tool_call_round_trip():
+    meta = pa.tool_call_metadata("call_1", "file_bug", "completed", result="BUG-12")
+    assert set(meta) == {pa.TOOL_CALL_EXT_URI}
+    assert pa.parse_tool_call(meta) == {
         "toolCallId": "call_1",
         "name": "file_bug",
         "phase": "completed",
@@ -136,12 +140,29 @@ def test_emit_and_parse_tool_call():
     }
 
 
-# ── cross-extension: parse only matches its own MIME ──────────────────────────
+# ── merge + isolation ────────────────────────────────────────────────────────
 
 
-def test_parse_helpers_reject_foreign_mime():
-    cost = pa.emit_cost({"input_tokens": 1, "output_tokens": 1})
-    assert pa.parse_confidence(cost) is None
-    assert pa.parse_worldstate_delta(cost) is None
-    assert pa.parse_tool_call(cost) is None
-    assert pa.parse_cost(cost) is not None
+def test_merge_extension_metadata_combines_fragments():
+    merged = pa.merge_extension_metadata(
+        pa.cost_metadata({"input_tokens": 1, "output_tokens": 1}, cost_usd=0.01),
+        pa.confidence_metadata(0.92),
+    )
+    assert set(merged) == {pa.COST_EXT_URI, pa.CONFIDENCE_EXT_URI}
+    assert pa.parse_cost(merged)["costUsd"] == 0.01
+    assert pa.parse_confidence(merged)["confidence"] == 0.92
+
+
+def test_parse_helpers_read_only_their_own_uri_key():
+    # A metadata map carrying only cost yields cost, and nothing for the others.
+    meta = pa.cost_metadata({"input_tokens": 1, "output_tokens": 1})
+    assert pa.parse_cost(meta) is not None
+    assert pa.parse_confidence(meta) is None
+    assert pa.parse_worldstate_delta(meta) is None
+    assert pa.parse_tool_call(meta) is None
+
+
+def test_parse_helpers_tolerate_none_and_empty():
+    for m in (None, {}, {"unrelated": 1}):
+        assert pa.parse_cost(m) is None
+        assert pa.parse_tool_call(m) is None

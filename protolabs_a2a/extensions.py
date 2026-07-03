@@ -1,13 +1,20 @@
-"""protoLabs A2A custom extensions — the four fleet-wide DataPart conventions.
+"""protoLabs A2A custom extensions — the four fleet-wide metadata conventions.
 
-Each extension is a ``(MIME, card-extension-URI, payload)`` triple. The MIME is
-the ``metadata.mimeType`` discriminator on a custom DataPart (see ``parts.py``);
-the URI is what the agent card declares in ``capabilities.extensions[]`` so a
-consumer knows to extract the part; the payload is the JSON object under the
-part's ``content.value``.
+Each extension contributes a JSON payload to the ``metadata`` map of a core A2A
+object (``Message`` / ``Artifact`` / ``Task``), **keyed by the extension URI**.
+This is the convention the A2A spec prescribes for extension data:
 
-Mirrors the TS reference layer (``@protolabs/a2a``) byte-for-byte so the hub and
-every agent (in-process Ava, roxy, ORBIS, pwnDeck, protoAgent) interoperate.
+    docs/topics/extensions.md → Limitations: "Extensions should place custom
+    attributes in the `metadata` map present on core data structures."
+
+and the one the official Timestamp extension follows verbatim ("stored in the
+metadata for a Message or Artifact, under the Extension URI"). The URI is also
+what the agent card declares in ``capabilities.extensions[]`` so a consumer
+knows to look for it — the same URI serves as both the card declaration and the
+metadata key, with the version encoded in the URI (``…/cost-v1``).
+
+Mirrors the TS reference layer (``@protolabs/a2a``) so the hub and every agent
+(in-process Ava, roxy, ORBIS, pwnDeck, protoAgent) interoperate byte-for-byte.
 
 The four extensions
 ───────────────────
@@ -16,24 +23,26 @@ The four extensions
   worldstate-delta-v1  observed shared-state mutations on a terminal task
   tool-call-v1         per-tool progress event on a status frame
 
-``emit_*`` returns a wire-shaped DataPart dict (via ``parts.data_part``).
-``parse_*`` takes a part dict and returns the typed payload iff the part's MIME
-matches that extension, else None — so a consumer can route ``parts`` by MIME.
+Where each attaches (guidance — the helpers are location-agnostic):
+  - cost / confidence / worldstate-delta are terminal telemetry → merge into the
+    final **Artifact.metadata** (or the terminal status **Message.metadata**).
+  - tool-call is a streaming progress event → merge into the status update's
+    **Message.metadata** (the spec's profile-extension pattern:
+    ``TaskStatus.message.metadata[<uri>]``).
+
+Each ``*_metadata`` builder returns a one-key fragment ``{<EXT_URI>: <payload>}``;
+merge one or more into an object's metadata (``merge_extension_metadata`` is a
+convenience for combining several). Each ``parse_*`` reads a metadata map and
+returns the typed payload iff the extension's URI key is present, else ``None`` —
+so a consumer routes an object's ``metadata`` by URI.
 """
 
 from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from .parts import data_part, read_data
-
-# ── MIME types (the metadata.mimeType discriminator) ──────────────────────────
-COST_MIME = "application/vnd.protolabs.cost-v1+json"
-CONFIDENCE_MIME = "application/vnd.protolabs.confidence-v1+json"
-WORLDSTATE_DELTA_MIME = "application/vnd.protolabs.worldstate-delta-v1+json"
-TOOL_CALL_MIME = "application/vnd.protolabs.tool-call-v1+json"
-
-# ── Card extension URIs (capabilities.extensions[].uri) ───────────────────────
+# ── Card extension URIs — the metadata KEY and capabilities.extensions[].uri ───
+# The version is encoded in the URI (…-v1); bump the URI to version an extension.
 COST_EXT_URI = "https://proto-labs.ai/a2a/ext/cost-v1"
 CONFIDENCE_EXT_URI = "https://proto-labs.ai/a2a/ext/confidence-v1"
 WORLDSTATE_DELTA_EXT_URI = "https://proto-labs.ai/a2a/ext/worldstate-delta-v1"
@@ -86,15 +95,19 @@ class ToolCallPayload(TypedDict, total=False):
 # ── cost-v1 ───────────────────────────────────────────────────────────────────
 
 
-def emit_cost(
+def cost_metadata(
     usage: CostUsage,
     *,
     duration_ms: int | None = None,
     cost_usd: float | None = None,
     success: bool | None = None,
 ) -> dict[str, Any]:
-    """Build a cost-v1 DataPart. ``usage`` token counts are required; duration,
-    cost, and success are included only when provided."""
+    """Build a cost-v1 metadata fragment ``{COST_EXT_URI: <payload>}``.
+
+    ``usage`` token counts are required; duration, cost, and success are included
+    only when provided. Merge the fragment into a terminal Artifact's (or
+    Message's) ``metadata`` map.
+    """
     payload: CostPayload = {"usage": usage}
     if duration_ms is not None:
         payload["durationMs"] = duration_ms
@@ -102,54 +115,61 @@ def emit_cost(
         payload["costUsd"] = cost_usd
     if success is not None:
         payload["success"] = success
-    return data_part(payload, COST_MIME)
+    return {COST_EXT_URI: payload}
 
 
-def parse_cost(part: dict[str, Any]) -> CostPayload | None:
-    mime, payload = read_data(part)
-    return payload if mime == COST_MIME and isinstance(payload, dict) else None
+def parse_cost(metadata: dict[str, Any] | None) -> CostPayload | None:
+    """Read cost-v1 from an object's ``metadata`` map, or ``None`` if absent."""
+    value = metadata.get(COST_EXT_URI) if isinstance(metadata, dict) else None
+    return value if isinstance(value, dict) else None
 
 
 # ── confidence-v1 ─────────────────────────────────────────────────────────────
 
 
-def emit_confidence(
+def confidence_metadata(
     confidence: float,
     *,
     explanation: str | None = None,
     success: bool | None = None,
 ) -> dict[str, Any]:
-    """Build a confidence-v1 DataPart."""
+    """Build a confidence-v1 metadata fragment ``{CONFIDENCE_EXT_URI: <payload>}``."""
     payload: ConfidencePayload = {"confidence": confidence}
     if explanation:
         payload["explanation"] = explanation
     if success is not None:
         payload["success"] = success
-    return data_part(payload, CONFIDENCE_MIME)
+    return {CONFIDENCE_EXT_URI: payload}
 
 
-def parse_confidence(part: dict[str, Any]) -> ConfidencePayload | None:
-    mime, payload = read_data(part)
-    return payload if mime == CONFIDENCE_MIME and isinstance(payload, dict) else None
+def parse_confidence(metadata: dict[str, Any] | None) -> ConfidencePayload | None:
+    """Read confidence-v1 from an object's ``metadata`` map, or ``None``."""
+    value = metadata.get(CONFIDENCE_EXT_URI) if isinstance(metadata, dict) else None
+    return value if isinstance(value, dict) else None
 
 
 # ── worldstate-delta-v1 ───────────────────────────────────────────────────────
 
 
-def emit_worldstate_delta(deltas: list[WorldstateDelta]) -> dict[str, Any]:
-    """Build a worldstate-delta-v1 DataPart wrapping ``deltas``."""
-    return data_part({"deltas": list(deltas)}, WORLDSTATE_DELTA_MIME)
+def worldstate_delta_metadata(deltas: list[WorldstateDelta]) -> dict[str, Any]:
+    """Build a worldstate-delta-v1 metadata fragment wrapping ``deltas``."""
+    return {WORLDSTATE_DELTA_EXT_URI: {"deltas": list(deltas)}}
 
 
-def parse_worldstate_delta(part: dict[str, Any]) -> WorldstateDeltaPayload | None:
-    mime, payload = read_data(part)
-    return payload if mime == WORLDSTATE_DELTA_MIME and isinstance(payload, dict) else None
+def parse_worldstate_delta(
+    metadata: dict[str, Any] | None,
+) -> WorldstateDeltaPayload | None:
+    """Read worldstate-delta-v1 from an object's ``metadata`` map, or ``None``."""
+    value = (
+        metadata.get(WORLDSTATE_DELTA_EXT_URI) if isinstance(metadata, dict) else None
+    )
+    return value if isinstance(value, dict) else None
 
 
 # ── tool-call-v1 ──────────────────────────────────────────────────────────────
 
 
-def emit_tool_call(
+def tool_call_metadata(
     tool_call_id: str,
     name: str,
     phase: Literal["started", "completed", "failed"],
@@ -158,7 +178,10 @@ def emit_tool_call(
     result: Any = None,
     error: str | None = None,
 ) -> dict[str, Any]:
-    """Build a tool-call-v1 DataPart for a per-tool progress event."""
+    """Build a tool-call-v1 metadata fragment for a per-tool progress event.
+
+    Merge into the status update's ``Message.metadata`` on the streaming frame.
+    """
     payload: ToolCallPayload = {"toolCallId": tool_call_id, "name": name, "phase": phase}
     if args is not None:
         payload["args"] = args
@@ -166,12 +189,35 @@ def emit_tool_call(
         payload["result"] = result
     if error is not None:
         payload["error"] = error
-    return data_part(payload, TOOL_CALL_MIME)
+    return {TOOL_CALL_EXT_URI: payload}
 
 
-def parse_tool_call(part: dict[str, Any]) -> ToolCallPayload | None:
-    mime, payload = read_data(part)
-    return payload if mime == TOOL_CALL_MIME and isinstance(payload, dict) else None
+def parse_tool_call(metadata: dict[str, Any] | None) -> ToolCallPayload | None:
+    """Read tool-call-v1 from an object's ``metadata`` map, or ``None``."""
+    value = metadata.get(TOOL_CALL_EXT_URI) if isinstance(metadata, dict) else None
+    return value if isinstance(value, dict) else None
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+
+def merge_extension_metadata(*fragments: dict[str, Any]) -> dict[str, Any]:
+    """Merge one or more ``*_metadata`` fragments into a single metadata map.
+
+    A convenience for attaching several extensions at once, e.g.::
+
+        artifact.metadata = merge_extension_metadata(
+            cost_metadata(usage, cost_usd=0.01),
+            confidence_metadata(0.92),
+        )
+
+    Later fragments win on key collision (each extension owns its own URI key, so
+    a collision only happens when the same extension is passed twice).
+    """
+    merged: dict[str, Any] = {}
+    for fragment in fragments:
+        merged.update(fragment)
+    return merged
 
 
 # Convenience: all four card-extension URIs, in the canonical order.
@@ -181,3 +227,11 @@ ALL_EXTENSION_URIS = (
     WORLDSTATE_DELTA_EXT_URI,
     TOOL_CALL_EXT_URI,
 )
+
+# Human-readable descriptions for the AgentExtension card declaration.
+EXTENSION_DESCRIPTIONS = {
+    COST_EXT_URI: "Token usage, duration, and cost for a completed task.",
+    CONFIDENCE_EXT_URI: "Agent self-reported confidence for a completed task.",
+    WORLDSTATE_DELTA_EXT_URI: "Observed shared-state mutations for a completed task.",
+    TOOL_CALL_EXT_URI: "Per-tool progress events emitted on status frames.",
+}

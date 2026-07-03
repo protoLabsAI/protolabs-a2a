@@ -5,9 +5,9 @@ SSE, task lifecycle, push delivery). This package owns only what is specific to
 the protoLabs fleet so every agent (in-process Ava, roxy, ORBIS, pwnDeck,
 protoAgent) interoperates byte-for-byte:
 
-  - ``extensions`` — the four custom DataPart conventions (cost / confidence /
-    worldstate-delta / tool-call): MIME + card-URI constants, payload types,
-    and ``emit_*`` / ``parse_*`` helpers.
+  - ``extensions`` — the four custom metadata conventions (cost / confidence /
+    worldstate-delta / tool-call): extension-URI constants (the metadata key +
+    card declaration), payload types, and ``*_metadata`` / ``parse_*`` helpers.
   - ``parts`` — build / read the A2A 1.0 member-discriminated Part shape.
   - ``agent_card`` — ``build_agent_card`` applying provider, JSONRPC interface,
     extension declarations, and auth schemes.
@@ -35,27 +35,25 @@ from .auth import (
 from .extensions import (
     ALL_EXTENSION_URIS,
     CONFIDENCE_EXT_URI,
-    CONFIDENCE_MIME,
     COST_EXT_URI,
-    COST_MIME,
+    EXTENSION_DESCRIPTIONS,
     TOOL_CALL_EXT_URI,
-    TOOL_CALL_MIME,
     WORLDSTATE_DELTA_EXT_URI,
-    WORLDSTATE_DELTA_MIME,
     ConfidencePayload,
     CostPayload,
     CostUsage,
     ToolCallPayload,
     WorldstateDelta,
     WorldstateDeltaPayload,
-    emit_confidence,
-    emit_cost,
-    emit_tool_call,
-    emit_worldstate_delta,
+    confidence_metadata,
+    cost_metadata,
+    merge_extension_metadata,
     parse_confidence,
     parse_cost,
     parse_tool_call,
     parse_worldstate_delta,
+    tool_call_metadata,
+    worldstate_delta_metadata,
 )
 from .parts import (
     DATA_MEDIA_TYPE,
@@ -91,23 +89,20 @@ __all__ = [
     "validate_skill_args",
     "emit_skill_result",
     "parse_skill_result",
-    # extensions — MIME constants
-    "COST_MIME",
-    "CONFIDENCE_MIME",
-    "WORLDSTATE_DELTA_MIME",
-    "TOOL_CALL_MIME",
-    # extensions — card URIs
+    # extensions — card URIs (also the metadata key) + descriptions
     "COST_EXT_URI",
     "CONFIDENCE_EXT_URI",
     "WORLDSTATE_DELTA_EXT_URI",
     "TOOL_CALL_EXT_URI",
     "ALL_EXTENSION_URIS",
-    # extensions — emit
-    "emit_cost",
-    "emit_confidence",
-    "emit_worldstate_delta",
-    "emit_tool_call",
-    # extensions — parse
+    "EXTENSION_DESCRIPTIONS",
+    # extensions — build metadata fragments
+    "cost_metadata",
+    "confidence_metadata",
+    "worldstate_delta_metadata",
+    "tool_call_metadata",
+    "merge_extension_metadata",
+    # extensions — parse (read a metadata map)
     "parse_cost",
     "parse_confidence",
     "parse_worldstate_delta",
