@@ -1,0 +1,66 @@
+name: publish
+
+# Publish protolabs-a2a to PyPI on a GitHub Release, via PyPI Trusted
+# Publishing (OIDC) — no long-lived API token stored as a secret.
+#
+# One-time PyPI setup (owner): add a "pending publisher" for this project at
+# https://pypi.org/manage/account/publishing/ with:
+#   PyPI project name:  protolabs-a2a
+#   Owner:              protoLabsAI
+#   Repository name:    protolabs-a2a
+#   Workflow name:      publish.yml
+#   Environment name:   pypi
+# After the first publish the pending publisher becomes a normal trusted
+# publisher. To release: cut a GitHub Release on a vX.Y.Z tag whose version
+# matches pyproject.toml — that fires this workflow.
+#
+# Why this exists: ORBIS installs this package at a customer's FIRST RUN via
+# pip. A git+https dependency needs a working `git` (Xcode CLT) that stock
+# consumer Macs lack, so the sidecar install died on fresh machines
+# (ORBIS#487). Publishing a plain wheel to PyPI removes the git requirement.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+      - name: Validate metadata + version matches the release tag
+        run: |
+          twine check dist/*
+          PKG_VERSION="$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "pyproject=$PKG_VERSION  tag=$TAG"
+          test "$PKG_VERSION" = "$TAG" || { echo "::error::pyproject version ($PKG_VERSION) != release tag ($TAG)"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/protolabs-a2a
+    permissions:
+      id-token: write   # OIDC token for PyPI Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
