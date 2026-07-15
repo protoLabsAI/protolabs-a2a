@@ -22,6 +22,10 @@ name: publish
 on:
   release:
     types: [published]
+  # Manual fallback: the release-event trigger can be flaky for CLI-created
+  # releases. Dispatch from the default branch (its source == the release tag's;
+  # publish.yml only adds .github/) to publish the version in pyproject.toml.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -38,13 +42,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip build twine
           python -m build
-      - name: Validate metadata + version matches the release tag
+      - name: Validate metadata (+ tag match on release)
         run: |
           twine check dist/*
           PKG_VERSION="$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
-          TAG="${GITHUB_REF_NAME#v}"
-          echo "pyproject=$PKG_VERSION  tag=$TAG"
-          test "$PKG_VERSION" = "$TAG" || { echo "::error::pyproject version ($PKG_VERSION) != release tag ($TAG)"; exit 1; }
+          echo "publishing pyproject version: $PKG_VERSION"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            echo "release tag: $TAG"
+            test "$PKG_VERSION" = "$TAG" || { echo "::error::pyproject version ($PKG_VERSION) != release tag ($TAG)"; exit 1; }
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: dist
