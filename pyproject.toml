@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "protolabs-a2a"
-version = "0.2.0"
+version = "0.2.1"
 description = "protoLabs A2A conventions layer (Python) — the 4 custom extensions + agent-card + auth, on top of a2a-sdk. Mirrors @protolabs/a2a (TS, in protoWorkstacean)."
 readme = "README.md"
 requires-python = ">=3.11"
